@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g. v1.3.0). Leave empty to build artifacts only."
+        description: "Tag to release (e.g. v1.3.0). Leave empty on tag push."
         required: false
         default: ""
 
@@ -35,7 +35,7 @@ jobs:
       - name: Install deps & bundle app
         shell: bash
         run: |
-          npm ci
+          npm install
           npm run build:app
           test -f dist/app.cjs
 
@@ -46,7 +46,6 @@ jobs:
           PKG=dist/pkg/browser-console-windows
           mkdir -p "$PKG/runtime" "$PKG/app"
 
-          # Portable Node (Windows x64)
           curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-win-x64.zip" -o /tmp/node-win.zip
           python - <<'PY'
           import zipfile, shutil, os
@@ -61,7 +60,6 @@ jobs:
           cp shell.windows.json "$PKG/shell.json"
           cp README.md LICENSE "$PKG/" 2>/dev/null || true
 
-          # Production node_modules next to app (native ConPTY)
           pushd "$PKG/app" >/dev/null
           cat > package.json <<'JSON'
           {
@@ -76,11 +74,10 @@ jobs:
           npm install --omit=dev
           popd >/dev/null
 
-          # Native launcher exe (tiny)
+          # Tiny native launcher (no START.bat)
           gcc -O2 -s -mconsole src/launcher.c -o "$PKG/browser-console.exe"
           ls -la "$PKG"
 
-          # Zip
           mkdir -p dist/release
           powershell -NoProfile -Command \
             "Compress-Archive -Path 'dist/pkg/browser-console-windows/*' -DestinationPath 'dist/release/browser-console-windows-x64.zip' -Force"
@@ -104,7 +101,7 @@ jobs:
 
       - name: Install deps & bundle app
         run: |
-          npm ci
+          npm install
           npm run build:app
 
       - name: Assemble Linux package
@@ -160,7 +157,7 @@ jobs:
 
       - name: Install deps & bundle app
         run: |
-          npm ci
+          npm install
           npm run build:app
 
       - name: Assemble macOS package
@@ -169,7 +166,6 @@ jobs:
           PKG=dist/pkg/browser-console-macos-arm64
           mkdir -p "$PKG/runtime" "$PKG/app"
 
-          # macos-latest is arm64
           curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-darwin-arm64.tar.gz" -o /tmp/node-mac.tar.gz
           tar -xzf /tmp/node-mac.tar.gz -C /tmp
           cp "/tmp/node-v${NODE_VERSION}-darwin-arm64/bin/node" "$PKG/runtime/node"
@@ -224,19 +220,26 @@ jobs:
           mkdir -p release-assets
           find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec cp -v {} release-assets/ \;
           ls -la release-assets/
-          # checksums
           cd release-assets
-          sha256sum * > SHA256SUMS.txt
+          sha256sum * > SHA256SUMS.txt || shasum -a 256 * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          name: Browser Console ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           generate_release_notes: true
           fail_on_unmatched_files: true
-          files: |
-            release-assets/*
+          body: |
+            Portable packages (no START.bat).
+
+            | Asset | Platform |
+            |---|---|
+            | `browser-console-windows-x64.zip` | Windows x64 — run `browser-console.exe` |
+            | `browser-console-linux-x64.tar.gz` | Linux x64 — run `./browser-console` |
+            | `browser-console-macos-arm64.tar.gz` | macOS arm64 — run `./browser-console` |
+
+            Unpack **keeping the folder structure**. Put `shell.json` next to the launcher.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
