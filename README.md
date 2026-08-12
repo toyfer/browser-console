@@ -2,33 +2,39 @@
 
 ブラウザから PC のシェル（PTY）を操作する軽量コンソール。
 
-設定は実行ファイルと同じディレクトリの `shell.json` だけ。Windows / Linux / macOS 向けポータブル成果物は **GitHub Actions** がビルドし、タグ push で Release に載せます。
+設定は実行ファイルと同じディレクトリの **`shell.json` だけ**。Windows / Linux / macOS 向けポータブル成果物は **GitHub Actions** がビルドし、**タグ push で Release に載せます**。
+
+**START.bat はありません。** Windows は小さな `browser-console.exe` ランチャーだけです。
+
+## リポジトリ
+
+https://github.com/toyfer/browser-console
 
 ## 特徴
 
 - 本物の PTY（Windows は ConPTY + 同梱 `conpty.dll`）
-- Tab 補完 / Ctrl+C / 矢印キーがそのまま使える
+- Tab 補完 / Ctrl+C / 矢印キー
 - 枠なし全画面 xterm.js
-- フォントは `shell.json` の `ui` で変更（既定は等幅: Consolas → Cascadia Mono → MS Gothic → BIZ UDGothic）
-- 起動は `browser-console.exe`（Windows）または各 OS のランチャー。**START.bat は不要**
+- フォントは `shell.json` の `ui` で変更（既定は等幅）
+- 起動: Windows `browser-console.exe` / Unix `./browser-console`
 
-## 使い方（Release の zip）
+## 使い方（Release の成果物）
 
-1. [Releases](https://github.com/toyfer/browser-console/releases) から OS 用 zip を落とす
+1. [Releases](https://github.com/toyfer/browser-console/releases) から OS 用アーカイブを落とす
 2. **フォルダごと**展開する（中身だけ抜き出さない）
 3. 起動
    - **Windows:** `browser-console.exe`
    - **Linux / macOS:** `./browser-console`
-4. ブラウザで `http://127.0.0.1:8080`（`openBrowser: true` なら自動）
+4. ブラウザで `http://127.0.0.1:8080`
 
 ### フォルダ構成（崩さない）
 
 ```
-browser-console.exe          # or ./browser-console
+browser-console.exe   # or ./browser-console
 shell.json
-runtime/node(.exe)           # portable Node
+runtime/node(.exe)
 app/app.cjs
-app/node_modules/...         # ConPTY / node-pty 含む — 削除禁止
+app/node_modules/...  # ConPTY / node-pty — 削除禁止
 ```
 
 ## shell.json
@@ -51,35 +57,18 @@ app/node_modules/...         # ConPTY / node-pty 含む — 削除禁止
 }
 ```
 
-| フィールド | 説明 |
-|---|---|
-| `shell` | シェルの**絶対パス**（必須） |
-| `shellArgs` | 引数配列 |
-| `cwd` | 起動ディレクトリ。`null` ならプロセス cwd |
-| `server.host` / `port` | バインド。既定 `127.0.0.1:8080` |
-| `server.openBrowser` | 起動時にブラウザを開くか |
-| `ui.fontFamily` | **先頭は必ず等幅**（游ゴシック等を先頭にすると幅が崩れる） |
-| `ui.fontSize` / `lineHeight` | サイズ・行高 |
+- `shell` … 絶対パス（必須）
+- `ui.fontFamily` … **先頭は必ず等幅**（游ゴシック等を先頭にすると幅が崩れる）
+- 探索: `shell.json` → `shell.config.json` → `config.json`
 
-探索順: 実行 cwd → `shell.json` / `shell.config.json` / `config.json`
-
-### OS 別の shell 例
-
-- Windows PowerShell: `C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
-- Windows cmd: `C:\\Windows\\System32\\cmd.exe`
-- Git Bash: `C:\\Program Files\\Git\\bin\\bash.exe` + `shellArgs: ["--login","-i"]`
-- Linux: `/bin/bash` + `["-l"]`
-- macOS: `/bin/zsh` + `["-l"]`
-
-同梱の `shell.windows.json` / `shell.linux.json` / `shell.macos.json` を `shell.json` にリネームして使えます。
+テンプレ: `shell.windows.json` / `shell.linux.json` / `shell.macos.json`
 
 ## 操作
 
 | キー | 動作 |
 |---|---|
 | Tab | 補完 |
-| Ctrl+C | 中断（PTY に `\\x03`） |
-| 矢印 | 履歴・カーソル |
+| Ctrl+C | 中断 |
 | Ctrl+Shift+C | コピー（選択時） |
 | Ctrl+Shift+V | ペースト |
 
@@ -92,37 +81,45 @@ npx tsx src/main.ts
 ```
 
 ```bash
-# app バンドルのみ
-npm run build:app
+npm run build:app   # dist/app.cjs
 ```
 
 ## Release（GitHub Actions）
 
-タグを push すると Actions が OS 別 zip をビルドし、GitHub Release にアップロードします。
+タグを push すると [Release workflow](.github/workflows/release.yml) が:
+
+1. Windows / Linux / macOS でポータブル成果物をビルド
+2. GitHub Release を作成し zip / tar.gz + SHA256SUMS をアップロード
 
 ```bash
+git clone https://github.com/toyfer/browser-console.git
+cd browser-console
 git tag v1.3.0
 git push origin v1.3.0
 ```
 
-ワークフロー: [`.github/workflows/release.yml`](.github/workflows/release.yml)
+または GitHub UI: **Actions → Release → Run workflow**（`tag` に `v1.3.0` を入力）。
 
-- `windows-latest` … ConPTY 同梱の Windows zip + 小さな起動 exe
-- `ubuntu-latest` … Linux x64 zip
-- `macos-latest` … macOS arm64 zip
+成果物:
+
+| ファイル | 内容 |
+|---|---|
+| `browser-console-windows-x64.zip` | Windows x64 + `browser-console.exe` |
+| `browser-console-linux-x64.tar.gz` | Linux x64 + `./browser-console` |
+| `browser-console-macos-arm64.tar.gz` | macOS arm64 + `./browser-console` |
 
 ## 技術
 
-- Backend: Node `http` + `ws` + [`@homebridge/node-pty-prebuilt-multiarch`](https://www.npmjs.com/package/@homebridge/node-pty-prebuilt-multiarch)
-- Frontend: [@xterm/xterm](https://xtermjs.org/) 5.5 + Fit / Unicode11 / WebLinks（CDN）
-- Windows: `useConpty` + `useConptyDll`（同梱 conpty.dll）、失敗時 winpty フォールバック
-- xterm `windowsPty` は Windows ホストのときだけ設定（カーソル位置ヒューリスティック）
+- Backend: Node `http` + `ws` + `@homebridge/node-pty-prebuilt-multiarch`
+- Frontend: `@xterm/xterm` 5.5 + Fit / Unicode11 / WebLinks（CDN）
+- Windows: `useConpty` + `useConptyDll`、失敗時 winpty
+- xterm `windowsPty` は Windows ホストのときだけ設定
 
 ## セキュリティ
 
-- 既定バインドは `127.0.0.1`（ローカルのみ）
-- シェルは設定ファイルのパスを `spawn` するだけ（シェルインジェクション用に `exec` しない）
-- インターネット公開する場合はリバースプロキシ認証などを自分で付けてください
+- 既定バインド `127.0.0.1`
+- シェルは `spawn` のみ（`exec` しない）
+- 公開する場合は認証を自分で付けてください
 
 ## License
 
