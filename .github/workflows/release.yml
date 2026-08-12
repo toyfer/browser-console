@@ -1,0 +1,242 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v1.3.0). Leave empty to build artifacts only."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20.18.1"
+
+jobs:
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps & bundle app
+        shell: bash
+        run: |
+          npm ci
+          npm run build:app
+          test -f dist/app.cjs
+
+      - name: Assemble Windows package
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG=dist/pkg/browser-console-windows
+          mkdir -p "$PKG/runtime" "$PKG/app"
+
+          # Portable Node (Windows x64)
+          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-win-x64.zip" -o /tmp/node-win.zip
+          python - <<'PY'
+          import zipfile, shutil, os
+          z=zipfile.ZipFile('/tmp/node-win.zip')
+          z.extractall('/tmp/node-win')
+          root=[d for d in os.listdir('/tmp/node-win') if d.startswith('node-v')][0]
+          shutil.copy(f'/tmp/node-win/{root}/node.exe', 'dist/pkg/browser-console-windows/runtime/node.exe')
+          print('node.exe ok')
+          PY
+
+          cp dist/app.cjs "$PKG/app/app.cjs"
+          cp shell.windows.json "$PKG/shell.json"
+          cp README.md LICENSE "$PKG/" 2>/dev/null || true
+
+          # Production node_modules next to app (native ConPTY)
+          pushd "$PKG/app" >/dev/null
+          cat > package.json <<'JSON'
+          {
+            "name": "browser-console-runtime",
+            "private": true,
+            "dependencies": {
+              "@homebridge/node-pty-prebuilt-multiarch": "0.14.1",
+              "ws": "8.18.0"
+            }
+          }
+          JSON
+          npm install --omit=dev
+          popd >/dev/null
+
+          # Native launcher exe (tiny)
+          gcc -O2 -s -mconsole src/launcher.c -o "$PKG/browser-console.exe"
+          ls -la "$PKG"
+
+          # Zip
+          mkdir -p dist/release
+          powershell -NoProfile -Command \
+            "Compress-Archive -Path 'dist/pkg/browser-console-windows/*' -DestinationPath 'dist/release/browser-console-windows-x64.zip' -Force"
+          ls -la dist/release/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: dist/release/browser-console-windows-x64.zip
+          if-no-files-found: error
+
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps & bundle app
+        run: |
+          npm ci
+          npm run build:app
+
+      - name: Assemble Linux package
+        run: |
+          set -euo pipefail
+          PKG=dist/pkg/browser-console-linux-x64
+          mkdir -p "$PKG/runtime" "$PKG/app"
+
+          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -o /tmp/node-linux.tar.xz
+          tar -xJf /tmp/node-linux.tar.xz -C /tmp
+          cp "/tmp/node-v${NODE_VERSION}-linux-x64/bin/node" "$PKG/runtime/node"
+          chmod +x "$PKG/runtime/node"
+
+          cp dist/app.cjs "$PKG/app/app.cjs"
+          cp shell.linux.json "$PKG/shell.json"
+          cp scripts/unix-launcher.sh "$PKG/browser-console"
+          chmod +x "$PKG/browser-console"
+          cp README.md LICENSE "$PKG/" 2>/dev/null || true
+
+          pushd "$PKG/app" >/dev/null
+          cat > package.json <<'JSON'
+          {
+            "name": "browser-console-runtime",
+            "private": true,
+            "dependencies": {
+              "@homebridge/node-pty-prebuilt-multiarch": "0.14.1",
+              "ws": "8.18.0"
+            }
+          }
+          JSON
+          npm install --omit=dev
+          popd >/dev/null
+
+          mkdir -p dist/release
+          tar -C dist/pkg -czf dist/release/browser-console-linux-x64.tar.gz browser-console-linux-x64
+          ls -la dist/release/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: dist/release/browser-console-linux-x64.tar.gz
+          if-no-files-found: error
+
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps & bundle app
+        run: |
+          npm ci
+          npm run build:app
+
+      - name: Assemble macOS package
+        run: |
+          set -euo pipefail
+          PKG=dist/pkg/browser-console-macos-arm64
+          mkdir -p "$PKG/runtime" "$PKG/app"
+
+          # macos-latest is arm64
+          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-darwin-arm64.tar.gz" -o /tmp/node-mac.tar.gz
+          tar -xzf /tmp/node-mac.tar.gz -C /tmp
+          cp "/tmp/node-v${NODE_VERSION}-darwin-arm64/bin/node" "$PKG/runtime/node"
+          chmod +x "$PKG/runtime/node"
+
+          cp dist/app.cjs "$PKG/app/app.cjs"
+          cp shell.macos.json "$PKG/shell.json"
+          cp scripts/unix-launcher.sh "$PKG/browser-console"
+          chmod +x "$PKG/browser-console"
+          cp README.md LICENSE "$PKG/" 2>/dev/null || true
+
+          pushd "$PKG/app" >/dev/null
+          cat > package.json <<'JSON'
+          {
+            "name": "browser-console-runtime",
+            "private": true,
+            "dependencies": {
+              "@homebridge/node-pty-prebuilt-multiarch": "0.14.1",
+              "ws": "8.18.0"
+            }
+          }
+          JSON
+          npm install --omit=dev
+          popd >/dev/null
+
+          mkdir -p dist/release
+          tar -C dist/pkg -czf dist/release/browser-console-macos-arm64.tar.gz browser-console-macos-arm64
+          ls -la dist/release/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: dist/release/browser-console-macos-arm64.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect assets
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec cp -v {} release-assets/ \;
+          ls -la release-assets/
+          # checksums
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
