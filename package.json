@@ -1,0 +1,26 @@
+{
+  "name": "browser-console",
+  "version": "1.3.0",
+  "description": "Browser-based PC console with real PTY (ConPTY on Windows)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "build:app": "esbuild src/main.ts --bundle --platform=node --format=cjs --outfile=dist/app.cjs --external:@homebridge/node-pty-prebuilt-multiarch --external:node-pty-prebuilt-multiarch --external:node-pty",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@homebridge/node-pty-prebuilt-multiarch": "^0.14.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/ws": "^8.5.10",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.4.0"
+  }
+}

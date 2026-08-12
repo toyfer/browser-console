@@ -1,0 +1,25 @@
+{
+  "shell": "/bin/bash",
+  "shellArgs": ["-l"],
+  "cwd": null,
+  "env": {
+    "TERM": "xterm-256color",
+    "COLORTERM": "truecolor"
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8080,
+    "openBrowser": false
+  },
+  "pty": {
+    "cols": 120,
+    "rows": 30
+  },
+  "ui": {
+    "fontFamily": "Consolas, Cascadia Mono, DejaVu Sans Mono, monospace",
+    "fontSize": 15,
+    "fontWeight": "normal",
+    "lineHeight": 1.0,
+    "theme": "dark"
+  }
+}
