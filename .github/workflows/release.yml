@@ -39,49 +39,78 @@ jobs:
           npm run build:app
           test -f dist/app.cjs
 
+      # Windows runners: avoid Unix /tmp paths (Python on Windows cannot open them).
+      # Use RUNNER_TEMP + PowerShell throughout this job.
       - name: Assemble Windows package
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          PKG=dist/pkg/browser-console-windows
-          mkdir -p "$PKG/runtime" "$PKG/app"
+          $ErrorActionPreference = "Stop"
+          $ver = $env:NODE_VERSION
+          $pkg = Join-Path $pwd "dist\pkg\browser-console-windows"
+          $runtime = Join-Path $pkg "runtime"
+          $app = Join-Path $pkg "app"
+          $release = Join-Path $pwd "dist\release"
+          New-Item -ItemType Directory -Force -Path $runtime, $app, $release | Out-Null
 
-          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-win-x64.zip" -o /tmp/node-win.zip
-          python - <<'PY'
-          import zipfile, shutil, os
-          z=zipfile.ZipFile('/tmp/node-win.zip')
-          z.extractall('/tmp/node-win')
-          root=[d for d in os.listdir('/tmp/node-win') if d.startswith('node-v')][0]
-          shutil.copy(f'/tmp/node-win/{root}/node.exe', 'dist/pkg/browser-console-windows/runtime/node.exe')
-          print('node.exe ok')
-          PY
+          $tmp = $env:RUNNER_TEMP
+          $zipPath = Join-Path $tmp "node-win.zip"
+          $extractDir = Join-Path $tmp "node-win"
+          $url = "https://nodejs.org/dist/v$ver/node-v$ver-win-x64.zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+          if (Test-Path $extractDir) { Remove-Item -Recurse -Force $extractDir }
+          Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+          $nodeRoot = Get-ChildItem $extractDir -Directory | Where-Object { $_.Name -like "node-v*" } | Select-Object -First 1
+          if (-not $nodeRoot) { throw "node extract root not found" }
+          Copy-Item (Join-Path $nodeRoot.FullName "node.exe") (Join-Path $runtime "node.exe") -Force
+          Write-Host "node.exe ok: $((Get-Item (Join-Path $runtime 'node.exe')).Length) bytes"
 
-          cp dist/app.cjs "$PKG/app/app.cjs"
-          cp shell.windows.json "$PKG/shell.json"
-          cp README.md LICENSE "$PKG/" 2>/dev/null || true
+          Copy-Item "dist\app.cjs" (Join-Path $app "app.cjs") -Force
+          Copy-Item "shell.windows.json" (Join-Path $pkg "shell.json") -Force
+          if (Test-Path README.md) { Copy-Item README.md $pkg -Force }
+          if (Test-Path LICENSE) { Copy-Item LICENSE $pkg -Force }
 
-          pushd "$PKG/app" >/dev/null
-          cat > package.json <<'JSON'
-          {
-            "name": "browser-console-runtime",
-            "private": true,
-            "dependencies": {
-              "@homebridge/node-pty-prebuilt-multiarch": "0.14.1",
-              "ws": "8.18.0"
+          # Production native deps (ConPTY)
+          @{
+            name = "browser-console-runtime"
+            private = $true
+            dependencies = @{
+              "@homebridge/node-pty-prebuilt-multiarch" = "0.14.1"
+              "ws" = "8.18.0"
             }
+          } | ConvertTo-Json -Depth 5 | Set-Content -Path (Join-Path $app "package.json") -Encoding utf8
+          Push-Location $app
+          try {
+            npm install --omit=dev
+            if ($LASTEXITCODE -ne 0) { throw "npm install failed: $LASTEXITCODE" }
+          } finally {
+            Pop-Location
           }
-          JSON
-          npm install --omit=dev
-          popd >/dev/null
 
-          # Tiny native launcher (no START.bat)
-          gcc -O2 -s -mconsole src/launcher.c -o "$PKG/browser-console.exe"
-          ls -la "$PKG"
+          # Tiny native launcher exe (no START.bat)
+          $exeOut = Join-Path $pkg "browser-console.exe"
+          $gcc = Get-Command gcc -ErrorAction SilentlyContinue
+          if (-not $gcc) {
+            # GitHub windows-latest usually has mingw via choco or Git; install if missing
+            Write-Host "gcc not found; installing mingw via choco..."
+            choco install mingw -y --no-progress
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+            $gcc = Get-Command gcc -ErrorAction SilentlyContinue
+          }
+          if (-not $gcc) { throw "gcc still not available after choco install" }
+          Write-Host "Using gcc: $($gcc.Source)"
+          & gcc -O2 -s -mconsole "src\launcher.c" -o $exeOut
+          if ($LASTEXITCODE -ne 0) { throw "gcc failed: $LASTEXITCODE" }
+          if (-not (Test-Path $exeOut)) { throw "browser-console.exe not produced" }
+          Write-Host "launcher exe: $((Get-Item $exeOut).Length) bytes"
 
-          mkdir -p dist/release
-          powershell -NoProfile -Command \
-            "Compress-Archive -Path 'dist/pkg/browser-console-windows/*' -DestinationPath 'dist/release/browser-console-windows-x64.zip' -Force"
-          ls -la dist/release/
+          Get-ChildItem $pkg | Format-Table Name, Length
+
+          $outZip = Join-Path $release "browser-console-windows-x64.zip"
+          if (Test-Path $outZip) { Remove-Item $outZip -Force }
+          # Compress contents (not the parent folder name)
+          Compress-Archive -Path (Join-Path $pkg "*") -DestinationPath $outZip -Force
+          Write-Host "zip: $((Get-Item $outZip).Length) bytes"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -108,11 +137,11 @@ jobs:
         run: |
           set -euo pipefail
           PKG=dist/pkg/browser-console-linux-x64
-          mkdir -p "$PKG/runtime" "$PKG/app"
+          mkdir -p "$PKG/runtime" "$PKG/app" "$RUNNER_TEMP"
 
-          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -o /tmp/node-linux.tar.xz
-          tar -xJf /tmp/node-linux.tar.xz -C /tmp
-          cp "/tmp/node-v${NODE_VERSION}-linux-x64/bin/node" "$PKG/runtime/node"
+          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -o "$RUNNER_TEMP/node-linux.tar.xz"
+          tar -xJf "$RUNNER_TEMP/node-linux.tar.xz" -C "$RUNNER_TEMP"
+          cp "$RUNNER_TEMP/node-v${NODE_VERSION}-linux-x64/bin/node" "$PKG/runtime/node"
           chmod +x "$PKG/runtime/node"
 
           cp dist/app.cjs "$PKG/app/app.cjs"
@@ -166,9 +195,9 @@ jobs:
           PKG=dist/pkg/browser-console-macos-arm64
           mkdir -p "$PKG/runtime" "$PKG/app"
 
-          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-darwin-arm64.tar.gz" -o /tmp/node-mac.tar.gz
-          tar -xzf /tmp/node-mac.tar.gz -C /tmp
-          cp "/tmp/node-v${NODE_VERSION}-darwin-arm64/bin/node" "$PKG/runtime/node"
+          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-darwin-arm64.tar.gz" -o "$RUNNER_TEMP/node-mac.tar.gz"
+          tar -xzf "$RUNNER_TEMP/node-mac.tar.gz" -C "$RUNNER_TEMP"
+          cp "$RUNNER_TEMP/node-v${NODE_VERSION}-darwin-arm64/bin/node" "$PKG/runtime/node"
           chmod +x "$PKG/runtime/node"
 
           cp dist/app.cjs "$PKG/app/app.cjs"
@@ -205,6 +234,7 @@ jobs:
     name: Publish GitHub Release
     needs: [build-windows, build-linux, build-macos]
     runs-on: ubuntu-latest
+    # Match v1.3.0 and also accidental v.1.3.0
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
     steps:
       - uses: actions/checkout@v4
@@ -232,7 +262,7 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           body: |
-            Portable packages (no START.bat).
+            Portable packages (**no START.bat**).
 
             | Asset | Platform |
             |---|---|
