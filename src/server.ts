@@ -43,7 +43,7 @@ function getPublicDir(): string | null {
     if (!c || seen.has(c)) continue;
     seen.add(c);
     try {
-      if (fs.existsSync(path.join(c, "vendor", "xterm.js"))) return c;
+      if (fs.existsSync(path.join(c, "vendor", "xterm.js"))) return path.resolve(c);
     } catch {
       /* ignore */
     }
@@ -51,10 +51,31 @@ function getPublicDir(): string | null {
   for (const c of candidates) {
     if (!c) continue;
     try {
-      if (fs.existsSync(c) && fs.statSync(c).isDirectory()) return c;
+      if (fs.existsSync(c) && fs.statSync(c).isDirectory()) return path.resolve(c);
     } catch {
       /* ignore */
     }
+  }
+  return null;
+}
+
+function resolvePublicFile(publicDir: string, urlPath: string): string | null {
+  let rel: string;
+  try {
+    rel = decodeURIComponent(urlPath);
+  } catch {
+    return null;
+  }
+  rel = rel.split("?")[0].replace(/^[/\\]+/, "");
+  if (!rel || rel.includes("\0")) return null;
+  const resolved = path.resolve(publicDir, rel);
+  const root = path.resolve(publicDir);
+  const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+  if (resolved !== root && !resolved.startsWith(prefix)) return null;
+  try {
+    if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) return resolved;
+  } catch {
+    return null;
   }
   return null;
 }
@@ -114,9 +135,8 @@ export function startServer(config: ShellConfig): http.Server {
     }
 
     if (publicDir) {
-      const rel = path.normalize(decodeURIComponent(urlPath)).replace(/^(\\.\.[\/\\])+/, "");
-      const filePath = path.join(publicDir, rel);
-      if (filePath.startsWith(publicDir) && fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+      const filePath = resolvePublicFile(publicDir, urlPath);
+      if (filePath) {
         const ext = path.extname(filePath);
         res.writeHead(200, { "Content-Type": MIME[ext] ?? "application/octet-stream" });
         fs.createReadStream(filePath).pipe(res);
