@@ -72,7 +72,7 @@ jobs:
           Write-Host "node.exe ok: $((Get-Item (Join-Path $runtime 'node.exe')).Length) bytes"
 
           Copy-Item "dist\app.cjs" (Join-Path $app "app.cjs") -Force
-          Copy-Item "public" $appPublic -Recurse -Force
+          Copy-Item "public\*" $appPublic -Recurse -Force
           if (-not (Test-Path (Join-Path $appPublic "vendor\xterm.js"))) { throw "app/public/vendor/xterm.js missing" }
           Copy-Item "shell.windows.json" (Join-Path $pkg "shell.json") -Force
           if (Test-Path README.md) { Copy-Item README.md $pkg -Force }
