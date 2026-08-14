@@ -69,10 +69,15 @@ export function buildIndexHtml(ui: Partial<UiOpts> = {}): string {
 <script src="/vendor/addon-unicode11.js"></script>
 <script>
 (function () {
-const Terminal = window.Terminal;
-const FitAddon = window.FitAddon;
-const WebLinksAddon = window.WebLinksAddon;
-const Unicode11Addon = window.Unicode11Addon;
+function ctor(ns, name) {
+  if (typeof ns === 'function') return ns;
+  if (ns && typeof ns[name] === 'function') return ns[name];
+  return null;
+}
+const Terminal = ctor(window.Terminal, 'Terminal');
+const FitAddon = ctor(window.FitAddon, 'FitAddon');
+const WebLinksAddon = ctor(window.WebLinksAddon, 'WebLinksAddon');
+const Unicode11Addon = ctor(window.Unicode11Addon, 'Unicode11Addon');
 
 if (!Terminal || !FitAddon || !WebLinksAddon || !Unicode11Addon) {
   document.body.innerHTML =
