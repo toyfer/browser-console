@@ -1,6 +1,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import type { ShellConfig } from "./config.js";
 import { publicUiConfig } from "./config.js";
@@ -10,23 +11,47 @@ import { buildIndexHtml } from "./embedded.js";
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
   ".woff2": "font/woff2",
   ".woff": "font/woff",
   ".ttf": "font/ttf",
 };
 
+function moduleDir(): string {
+  try {
+    return path.dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return path.dirname(process.argv[1] || process.cwd());
+  }
+}
+
 function getPublicDir(): string | null {
   const candidates = [
-    path.join(path.dirname(process.execPath), "public"),
     path.join(process.cwd(), "public"),
+    path.join(path.dirname(process.execPath), "public"),
     path.join(path.dirname(process.argv[1] || ""), "public"),
     path.join(path.dirname(process.argv[1] || ""), "..", "public"),
+    path.join(moduleDir(), "public"),
+    path.join(moduleDir(), "..", "public"),
+    path.join(moduleDir(), "..", "..", "public"),
   ];
+  const seen = new Set<string>();
   for (const c of candidates) {
+    if (!c || seen.has(c)) continue;
+    seen.add(c);
     try {
-      if (fs.existsSync(c)) return c;
+      if (fs.existsSync(path.join(c, "vendor", "xterm.js"))) return c;
+    } catch {
+      /* ignore */
+    }
+  }
+  for (const c of candidates) {
+    if (!c) continue;
+    try {
+      if (fs.existsSync(c) && fs.statSync(c).isDirectory()) return c;
     } catch {
       /* ignore */
     }
@@ -36,6 +61,13 @@ function getPublicDir(): string | null {
 
 export function startServer(config: ShellConfig): http.Server {
   const winBuild = getWinBuildNumber();
+  const publicDir = getPublicDir();
+  if (publicDir) {
+    console.log(`[static] public: ${publicDir}`);
+  } else {
+    console.warn("[static] public/vendor not found — UI will fail offline. Run npm install (or npm run vendor:xterm).");
+  }
+
   const uiBase = () => {
     const base = publicUiConfig(config);
     return {
@@ -63,6 +95,7 @@ export function startServer(config: ShellConfig): http.Server {
           pty: isPtyAvailable(),
           backend: getPtyBackend(),
           winBuildNumber: winBuild,
+          publicDir: publicDir ?? null,
         })
       );
       return;
@@ -80,12 +113,9 @@ export function startServer(config: ShellConfig): http.Server {
       return;
     }
 
-    const publicDir = getPublicDir();
     if (publicDir) {
-      const filePath = path.join(
-        publicDir,
-        path.normalize(urlPath).replace(/^(\\.\.[\/\\])+/, "")
-      );
+      const rel = path.normalize(decodeURIComponent(urlPath)).replace(/^(\\.\.[\/\\])+/, "");
+      const filePath = path.join(publicDir, rel);
       if (filePath.startsWith(publicDir) && fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
         const ext = path.extname(filePath);
         res.writeHead(200, { "Content-Type": MIME[ext] ?? "application/octet-stream" });

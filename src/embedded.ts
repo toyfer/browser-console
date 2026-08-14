@@ -41,7 +41,7 @@ export function buildIndexHtml(ui: Partial<UiOpts> = {}): string {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Console</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
+<link rel="stylesheet" href="/vendor/xterm.css" />
 <style>
   html, body {
     margin: 0; padding: 0; height: 100%; width: 100%;
@@ -63,21 +63,25 @@ export function buildIndexHtml(ui: Partial<UiOpts> = {}): string {
 </head>
 <body>
 <div id="terminal"></div>
-<script type="importmap">
-{
-  "imports": {
-    "@xterm/xterm": "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm",
-    "@xterm/addon-fit": "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm",
-    "@xterm/addon-web-links": "https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/+esm",
-    "@xterm/addon-unicode11": "https://cdn.jsdelivr.net/npm/@xterm/addon-unicode11@0.8.0/+esm"
-  }
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-fit.js"></script>
+<script src="/vendor/addon-web-links.js"></script>
+<script src="/vendor/addon-unicode11.js"></script>
+<script>
+(function () {
+const Terminal = window.Terminal;
+const FitAddon = window.FitAddon;
+const WebLinksAddon = window.WebLinksAddon;
+const Unicode11Addon = window.Unicode11Addon;
+
+if (!Terminal || !FitAddon || !WebLinksAddon || !Unicode11Addon) {
+  document.body.innerHTML =
+    '<pre style="color:#e74856;padding:16px;font:14px/1.4 monospace">' +
+    '[error] local xterm assets missing. Keep public/vendor next to the app\n' +
+    '(npm install copies them; Release packages ship app/public/vendor).' +
+    '</pre>';
+  return;
 }
-</script>
-<script type="module">
-import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
-import { WebLinksAddon } from '@xterm/addon-web-links';
-import { Unicode11Addon } from '@xterm/addon-unicode11';
 
 const BOOT = {
   fontFamily: ${JSON.stringify(o.fontFamily)},
@@ -99,206 +103,218 @@ const BOOT = {
   }
 };
 
-try {
-  const r = await fetch('/api/ui', { cache: 'no-store' });
-  if (r.ok) {
-    const j = await r.json();
-    if (j.fontFamily) BOOT.fontFamily = j.fontFamily;
-    if (typeof j.fontSize === 'number' && j.fontSize > 0) BOOT.fontSize = j.fontSize;
-    if (j.fontWeight) BOOT.fontWeight = j.fontWeight;
-    if (typeof j.lineHeight === 'number' && j.lineHeight > 0) BOOT.lineHeight = j.lineHeight;
-    if (j.ptyBackend === 'conpty' || j.ptyBackend === 'winpty') {
-      BOOT.windowsPty = {
-        backend: j.ptyBackend,
-        buildNumber: (typeof j.winBuildNumber === 'number' && j.winBuildNumber > 0)
-          ? j.winBuildNumber : ${winBuild}
-      };
-    } else if (j.ptyBackend === 'unix' || j.ptyBackend === 'none') {
-      BOOT.windowsPty = undefined;
-    }
+function start() {
+  const termOptions = {
+    fontFamily: BOOT.fontFamily,
+    fontSize: BOOT.fontSize,
+    fontWeight: BOOT.fontWeight,
+    fontWeightBold: 'bold',
+    lineHeight: BOOT.lineHeight || 1.0,
+    letterSpacing: 0,
+    cursorBlink: true,
+    cursorStyle: 'block',
+    cursorWidth: 1,
+    theme: BOOT.theme,
+    allowTransparency: false,
+    convertEol: false,
+    scrollback: 10000,
+    macOptionIsMeta: true,
+    rightClickSelectsWord: true,
+    drawBoldTextInBrightColors: true,
+    rescaleOverlappingGlyphs: true,
+    allowProposedApi: true,
+    smoothScrollDuration: 0,
+    ignoreBracketedPasteMode: false,
+  };
+
+  if (BOOT.windowsPty) {
+    termOptions.windowsPty = BOOT.windowsPty;
   }
-} catch {}
 
-try {
-  if (document.fonts) {
-    const names = BOOT.fontFamily.split(',').map(s => s.trim().replace(/^["']|["']$/g,'')).filter(Boolean).slice(0, 5);
-    await Promise.all(names.map(n => document.fonts.load(BOOT.fontSize + 'px "' + n + '"').catch(() => null)));
-    await document.fonts.ready;
+  const term = new Terminal(termOptions);
+  const fitAddon = new FitAddon();
+  const unicode11 = new Unicode11Addon();
+  term.loadAddon(fitAddon);
+  term.loadAddon(new WebLinksAddon());
+  term.loadAddon(unicode11);
+  try { term.unicode.activeVersion = '11'; } catch (e) { console.warn('unicode11', e); }
+
+  const host = document.getElementById('terminal');
+  term.open(host);
+
+  let ws = null;
+  let reconnectTimer = null;
+  let lastSent = { cols: 0, rows: 0 };
+  let resizeTimer = null;
+
+  function propose() {
+    let dims = null;
+    try { dims = fitAddon.proposeDimensions(); } catch {}
+    try { fitAddon.fit(); } catch {}
+    const cols = Math.max(2, (dims && dims.cols) || term.cols || 0);
+    const rows = Math.max(1, (dims && dims.rows) || term.rows || 0);
+    return { cols: cols | 0, rows: rows | 0 };
   }
-} catch {}
 
-const termOptions = {
-  fontFamily: BOOT.fontFamily,
-  fontSize: BOOT.fontSize,
-  fontWeight: BOOT.fontWeight,
-  fontWeightBold: 'bold',
-  lineHeight: BOOT.lineHeight || 1.0,
-  letterSpacing: 0,
-  cursorBlink: true,
-  cursorStyle: 'block',
-  cursorWidth: 1,
-  theme: BOOT.theme,
-  allowTransparency: false,
-  convertEol: false,
-  scrollback: 10000,
-  macOptionIsMeta: true,
-  rightClickSelectsWord: true,
-  drawBoldTextInBrightColors: true,
-  rescaleOverlappingGlyphs: true,
-  allowProposedApi: true,
-  smoothScrollDuration: 0,
-  ignoreBracketedPasteMode: false,
-};
+  function sendResize(force) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const size = propose();
+    if (size.cols < 20 || size.rows < 5) return;
+    if (size.cols > 500 || size.rows > 200) return;
+    if (!force && size.cols === lastSent.cols && size.rows === lastSent.rows) return;
+    lastSent = size;
+    try {
+      ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
+    } catch {}
+  }
 
-if (BOOT.windowsPty) {
-  termOptions.windowsPty = BOOT.windowsPty;
-}
-
-const term = new Terminal(termOptions);
-const fitAddon = new FitAddon();
-const unicode11 = new Unicode11Addon();
-term.loadAddon(fitAddon);
-term.loadAddon(new WebLinksAddon());
-term.loadAddon(unicode11);
-try { term.unicode.activeVersion = '11'; } catch (e) { console.warn('unicode11', e); }
-
-const host = document.getElementById('terminal');
-term.open(host);
-
-let ws = null;
-let reconnectTimer = null;
-let lastSent = { cols: 0, rows: 0 };
-let resizeTimer = null;
-
-function propose() {
-  let dims = null;
-  try { dims = fitAddon.proposeDimensions(); } catch {}
-  try { fitAddon.fit(); } catch {}
-  const cols = Math.max(2, (dims && dims.cols) || term.cols || 0);
-  const rows = Math.max(1, (dims && dims.rows) || term.rows || 0);
-  return { cols: cols | 0, rows: rows | 0 };
-}
-
-function sendResize(force) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const size = propose();
-  if (size.cols < 20 || size.rows < 5) return;
-  if (size.cols > 500 || size.rows > 200) return;
-  if (!force && size.cols === lastSent.cols && size.rows === lastSent.rows) return;
-  lastSent = size;
-  try {
-    ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
-  } catch {}
-}
-
-function scheduleResize(force) {
-  clearTimeout(resizeTimer);
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      resizeTimer = setTimeout(() => sendResize(!!force), 80);
+  function scheduleResize(force) {
+    clearTimeout(resizeTimer);
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        resizeTimer = setTimeout(function () { sendResize(!!force); }, 80);
+      });
     });
+  }
+
+  function connect() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const socket = new WebSocket(proto + '//' + location.host);
+    socket.binaryType = 'arraybuffer';
+    ws = socket;
+
+    socket.onopen = function () {
+      lastSent = { cols: 0, rows: 0 };
+      scheduleResize(true);
+      setTimeout(function () { scheduleResize(true); }, 150);
+      setTimeout(function () { scheduleResize(true); }, 500);
+    };
+
+    socket.onmessage = function (ev) {
+      let msg;
+      try {
+        const text = typeof ev.data === 'string' ? ev.data : new TextDecoder('utf-8').decode(ev.data);
+        msg = JSON.parse(text);
+      } catch {
+        const t = typeof ev.data === 'string' ? ev.data : new TextDecoder('utf-8').decode(ev.data);
+        term.write(t);
+        return;
+      }
+      if (msg.type === 'output') {
+        term.write(msg.data);
+      } else if (msg.type === 'connected') {
+        if (msg.pty === false) {
+          term.writeln('\\r\\n\\x1b[33m[warn] PTY disabled — Tab / Ctrl+C may not work\\x1b[0m');
+        }
+        if (msg.ui && (msg.ui.ptyBackend === 'conpty' || msg.ui.ptyBackend === 'winpty')) {
+          try {
+            term.options.windowsPty = {
+              backend: msg.ui.ptyBackend,
+              buildNumber: msg.ui.winBuildNumber || ${winBuild}
+            };
+          } catch {}
+        }
+        scheduleResize(true);
+      } else if (msg.type === 'exit') {
+        term.writeln('\\r\\n\\x1b[31m[exit ' + msg.code + ']\\x1b[0m');
+      }
+    };
+
+    socket.onclose = function () {
+      if (ws === socket) ws = null;
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(connect, 1200);
+    };
+
+    socket.onerror = function () {};
+  }
+
+  term.onData(function (data) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'input', data: data }));
+    }
+  });
+
+  term.onBinary(function (data) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'input', data: data }));
+    }
+  });
+
+  term.attachCustomKeyEventHandler(function (e) {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'c' || e.key === 'C')) {
+      if (e.shiftKey || (e.metaKey && !e.ctrlKey)) {
+        if (term.hasSelection()) {
+          const selText = term.getSelection();
+          if (selText) navigator.clipboard.writeText(selText);
+          return false;
+        }
+      }
+    }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'v' || e.key === 'V')) {
+      navigator.clipboard.readText().then(function (t) {
+        if (t && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'input', data: t }));
+        }
+      });
+      return false;
+    }
+    return true;
+  });
+
+  if (typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(function () { scheduleResize(false); });
+    ro.observe(host);
+  }
+  window.addEventListener('resize', function () { scheduleResize(false); });
+
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) scheduleResize(true);
+  });
+
+  propose();
+  term.focus();
+  connect();
+  document.addEventListener('mousedown', function () { term.focus(); });
+}
+
+function boot() {
+  fetch('/api/ui', { cache: 'no-store' }).then(function (r) {
+    return r.ok ? r.json() : null;
+  }).then(function (j) {
+    if (j) {
+      if (j.fontFamily) BOOT.fontFamily = j.fontFamily;
+      if (typeof j.fontSize === 'number' && j.fontSize > 0) BOOT.fontSize = j.fontSize;
+      if (j.fontWeight) BOOT.fontWeight = j.fontWeight;
+      if (typeof j.lineHeight === 'number' && j.lineHeight > 0) BOOT.lineHeight = j.lineHeight;
+      if (j.ptyBackend === 'conpty' || j.ptyBackend === 'winpty') {
+        BOOT.windowsPty = {
+          backend: j.ptyBackend,
+          buildNumber: (typeof j.winBuildNumber === 'number' && j.winBuildNumber > 0)
+            ? j.winBuildNumber : ${winBuild}
+        };
+      } else if (j.ptyBackend === 'unix' || j.ptyBackend === 'none') {
+        BOOT.windowsPty = undefined;
+      }
+    }
+  }).catch(function () {}).then(function () {
+    if (!document.fonts) {
+      start();
+      return;
+    }
+    const names = BOOT.fontFamily.split(',').map(function (s) {
+      return s.trim().replace(/^["']|["']$/g, '');
+    }).filter(Boolean).slice(0, 5);
+    Promise.all(names.map(function (n) {
+      return document.fonts.load(BOOT.fontSize + 'px "' + n + '"').catch(function () { return null; });
+    })).then(function () {
+      return document.fonts.ready;
+    }).catch(function () {}).then(start);
   });
 }
 
-function connect() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const socket = new WebSocket(proto + '//' + location.host);
-  socket.binaryType = 'arraybuffer';
-  ws = socket;
-
-  socket.onopen = () => {
-    lastSent = { cols: 0, rows: 0 };
-    scheduleResize(true);
-    setTimeout(() => scheduleResize(true), 150);
-    setTimeout(() => scheduleResize(true), 500);
-  };
-
-  socket.onmessage = (ev) => {
-    let msg;
-    try {
-      const text = typeof ev.data === 'string' ? ev.data : new TextDecoder('utf-8').decode(ev.data);
-      msg = JSON.parse(text);
-    } catch {
-      const t = typeof ev.data === 'string' ? ev.data : new TextDecoder('utf-8').decode(ev.data);
-      term.write(t);
-      return;
-    }
-    if (msg.type === 'output') {
-      term.write(msg.data);
-    } else if (msg.type === 'connected') {
-      if (msg.pty === false) {
-        term.writeln('\\r\\n\\x1b[33m[warn] PTY disabled — Tab / Ctrl+C may not work\\x1b[0m');
-      }
-      if (msg.ui && (msg.ui.ptyBackend === 'conpty' || msg.ui.ptyBackend === 'winpty')) {
-        try {
-          term.options.windowsPty = {
-            backend: msg.ui.ptyBackend,
-            buildNumber: msg.ui.winBuildNumber || ${winBuild}
-          };
-        } catch {}
-      }
-      scheduleResize(true);
-    } else if (msg.type === 'exit') {
-      term.writeln('\\r\\n\\x1b[31m[exit ' + msg.code + ']\\x1b[0m');
-    }
-  };
-
-  socket.onclose = () => {
-    if (ws === socket) ws = null;
-    clearTimeout(reconnectTimer);
-    reconnectTimer = setTimeout(connect, 1200);
-  };
-
-  socket.onerror = () => {};
-}
-
-term.onData((data) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'input', data }));
-  }
-});
-
-term.onBinary((data) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'input', data }));
-  }
-});
-
-term.attachCustomKeyEventHandler((e) => {
-  if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'c' || e.key === 'C')) {
-    if (e.shiftKey || (e.metaKey && !e.ctrlKey)) {
-      if (term.hasSelection()) {
-        const selText = term.getSelection();
-        if (selText) navigator.clipboard.writeText(selText);
-        return false;
-      }
-    }
-  }
-  if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'v' || e.key === 'V')) {
-    navigator.clipboard.readText().then((t) => {
-      if (t && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'input', data: t }));
-      }
-    });
-    return false;
-  }
-  return true;
-});
-
-if (typeof ResizeObserver !== 'undefined') {
-  const ro = new ResizeObserver(() => scheduleResize(false));
-  ro.observe(host);
-}
-window.addEventListener('resize', () => scheduleResize(false));
-
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) scheduleResize(true);
-});
-
-propose();
-term.focus();
-connect();
-document.addEventListener('mousedown', () => term.focus());
+boot();
+})();
 </script>
 </body>
 </html>`;
