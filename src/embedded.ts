@@ -77,7 +77,7 @@ const Unicode11Addon = window.Unicode11Addon;
 if (!Terminal || !FitAddon || !WebLinksAddon || !Unicode11Addon) {
   document.body.innerHTML =
     '<pre style="color:#e74856;padding:16px;font:14px/1.4 monospace">' +
-    '[error] local xterm assets missing. Keep public/vendor next to the app\n' +
+    '[error] local xterm assets missing. Keep public/vendor next to the app. ' +
     '(npm install copies them; Release packages ship app/public/vendor).' +
     '</pre>';
   return;

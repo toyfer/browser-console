@@ -48,14 +48,6 @@ function getPublicDir(): string | null {
       /* ignore */
     }
   }
-  for (const c of candidates) {
-    if (!c) continue;
-    try {
-      if (fs.existsSync(c) && fs.statSync(c).isDirectory()) return path.resolve(c);
-    } catch {
-      /* ignore */
-    }
-  }
   return null;
 }
 
@@ -66,7 +58,7 @@ function resolvePublicFile(publicDir: string, urlPath: string): string | null {
   } catch {
     return null;
   }
-  rel = rel.split("?")[0].replace(/^[/\\]+/, "");
+  rel = rel.replace(/^[/\\]+/, "");
   if (!rel || rel.includes("\0")) return null;
   const resolved = path.resolve(publicDir, rel);
   const root = path.resolve(publicDir);
@@ -116,7 +108,7 @@ export function startServer(config: ShellConfig): http.Server {
           pty: isPtyAvailable(),
           backend: getPtyBackend(),
           winBuildNumber: winBuild,
-          publicDir: publicDir ?? null,
+          vendorReady: publicDir !== null,
         })
       );
       return;

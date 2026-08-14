@@ -142,6 +142,9 @@ jobs:
           npm install
           npm run build:app
           test -f public/vendor/xterm.js
+          test -f public/vendor/xterm.css
+          test -f public/vendor/addon-fit.js
+          test -f public/vendor/addon-web-links.js
           test -f public/vendor/addon-unicode11.js
 
       - name: Assemble Linux package
@@ -202,6 +205,9 @@ jobs:
           npm install
           npm run build:app
           test -f public/vendor/xterm.js
+          test -f public/vendor/xterm.css
+          test -f public/vendor/addon-fit.js
+          test -f public/vendor/addon-web-links.js
           test -f public/vendor/addon-unicode11.js
 
       - name: Assemble macOS package
